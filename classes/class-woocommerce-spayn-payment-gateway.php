@@ -12,6 +12,7 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
      */
     class WC_Spayn_Payment_Gateway extends WC_Payment_Gateway {
         const IFRAME_ID = 'spayn_iframe';
+        const AMOUNT_CENT_CONVERT_FOR_PAYMENT = 100.0;
 
         protected static $_instance = null;
         private $order_status;
@@ -157,14 +158,16 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
  
             $this->includes();
             $this->hooks();
-            //$this->init();
         }
 
-        public function includes() {
-            require_once dirname( WOOCOMMERCE_SPAYN_PLUGIN_FILE ) . '/utils/network-utils.php';
-            require_once dirname( WOOCOMMERCE_SPAYN_PLUGIN_FILE ) . '/apis/api.php';
-        }
+        public function getInstance(){
+            if ( is_null( self::$_instance ) ) {
+                self::$_instance = new self();
+            }
 
+            return self::$_instance;
+        }
+   
         public function assets_url($uri){
             error_log('Asset loading ' .$uri);
             return $this->plugin_url('/assets/'.$uri);
@@ -176,41 +179,11 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
             else{return 'http://localhost/wp-content/plugins/woocommerce-spayn-payment-gateway-2/' . $uri;}
         } 
 
-        public function enqueue_scripts() {
-            wp_enqueue_style( 'woocommerce-spayn-default2', $this->assets_url( "/css/spayn-default-style.css" ), array(), false );
-        }
-
-        public function hooks() {
-            add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
-
-            add_action( 'woocommerce_update_options_payment_gateways_'.$this->id, array($this, 'process_admin_options'));
-
-            // Register with hook
-            add_action( 'plugins_loaded', array( $this, 'spayn_payment_load_plugin_textdomain' ) );
-            add_action( 'woocommerce_proceed_to_checkout', function() {
-                error_log('Spayn: Checkout');
-            });
-            add_action( 'woocommerce_before_checkout_form', function() {
-                error_log('Spayn: Checkout Form');
-                global $is_safari;
-                if($is_safari){
-                    $gw=(new WC_spayn_Payment_Gateway())->getInstance();
-                    if(!isset($_GET['safari']) && ( $_COOKIE['SpayN_' . $gw->getEnvironment()]!='done')){
-                        setcookie('SpayN_' . $gw->getEnvironment(),'done',time()+86400, ['samesite' => 'None', 'secure' => true] );
-                        $uri=$gw->getUrl() . '/redirect?url=' . base64url_encode(wc_get_checkout_url());
-                        wp_redirect($uri);
-                    }
-                }
-            });
-            add_action( 'woocommerce_after_order_notes', array( $this, 'add_payment_field' ) );
-            add_action( 'woocommerce_order_details_after_order_table',  array( $this, 'display_spayn_order_details'), 10, 1 );
-            add_action( 'woocommerce_admin_order_data_after_shipping_address',  array( $this, 'display_spayn_order_details'), 10, 1 );
-                
-        }
 
         function display_spayn_order_details($order){
             echo '<p><strong>'.__('SPayN Payment Reference').':</strong> ' . get_post_meta( $order->id, 'SPayN Merchant Operation', true ). '</p>';
         }
+
         function add_payment_field($checkout)
         {
             ob_start();
@@ -218,8 +191,8 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
             $apiClient=new tokenRequest($this);
             $field_label=empty($this->TEXT_LABEL_OPERATION_CODE) ? __('SPayN Merchant Operation') : $this->TEXT_LABEL_OPERATION_CODE;
             $payment_ref=$apiClient->getMerchantOperation();
-            printf('<div id="spayn-iframe" class="spayn-payment-iframe"><p><h3>%1$s</h3><br><iframe sandbox="allow-same-origin allow-scripts allow-popups allow-forms" frameBorder="0" align="center" class="spayn-payment-iframe-contents" frameborder="no" src="%2$s"></iframe></div>',
-                $this->title, $apiClient->requestTokenAndReturnPaymentIframeContents());
+            printf('<div id="%1$s" class="spayn-payment-iframe"><p><h3>%2$s</h3><br><iframe sandbox="allow-same-origin allow-scripts allow-popups allow-forms" frameBorder="0" align="center" class="spayn-payment-iframe-contents" frameborder="no" src="%3$s"></iframe></div>',
+                self::IFRAME_ID, $this->title, $apiClient->requestTokenAndReturnPaymentIframeContents());
                 $payment_field = woocommerce_form_field('spayn_payment_ref', array(
                     'type' => 'text',
                     'class' => array(
@@ -240,18 +213,8 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
             }
         }
 
-
         function spayn_payment_load_plugin_textdomain() {
             load_plugin_textdomain( 'woocommerce-spayn-payment-gateway', FALSE, basename( dirname( __FILE__ ) ) . '/languages/' );
-        }
-
-
-        public function getInstance(){
-            if ( is_null( self::$_instance ) ) {
-                self::$_instance = new self();
-            }
-
-            return self::$_instance;
         }
 
         public function getLogedUser(){
@@ -261,6 +224,116 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
             else{return '';}
         } 
 
+        
+
+        public function validate_fields() {
+            return true;
+        }
+        public function generateRefNumber() {
+            //$result=strtoupper(substr($this->MERCHANT,0,2));
+            $result = substr(str_shuffle(str_repeat("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 2)), 0, 2); //2 RANDOM CHARACTERS
+            $mt = explode(' ', microtime());
+            $result.=strval(((int)$mt[1]) * 1000 + ((int)round($mt[0] * 1000))); //EPOCH MILLISECONDS
+            $result.=strval(rand(0,9)); //RANDOM NUM
+            return $result;
+        }
+        public function process_payment( $order_id ) {
+            global $woocommerce;
+            $order = new WC_Order( $order_id );
+            $order->update_status($this->order_status, __( 'Awaiting payment', 'woocommerce-spayn-payment-gateway' ));
+            wc_reduce_stock_levels( $order_id );
+            if(isset($_POST[ $this->id.'-admin-note']) && trim($_POST[ $this->id.'-admin-note'])!=''){
+                $order->add_order_note(esc_html($_POST[ $this->id.'-admin-note']),1);
+            }
+            $woocommerce->cart->empty_cart();
+            return array(
+                'result' => 'success',
+                'redirect' => $this->get_return_url( $order )
+            );
+        }
+        public function clear_payment( $order_id ) {
+            global $woocommerce;
+            $order = new WC_Order( $order_id );
+            // Mark as on-hold (we're awaiting the cheque)
+            $order->update_status($this->order_status, __( 'Awaiting payment', 'woocommerce-spayn-payment-gateway' ));
+            // Reduce stock levels
+            wc_reduce_stock_levels( $order_id );
+            if(isset($_POST[ $this->id.'-admin-note']) && trim($_POST[ $this->id.'-admin-note'])!=''){
+                $order->add_order_note(esc_html($_POST[ $this->id.'-admin-note']),1);
+            }
+            // Remove cart
+            $woocommerce->cart->empty_cart();
+            // Return thankyou redirect
+        }
+        public function payment_fields(){
+            ?>
+                <script type="text/javascript">
+                    var paybutton=document.getElementById('place_order')
+                    if(paybutton!=null){
+                        // paybutton.style.visibility="hidden";
+                    }
+                    document.getElementById('spayn-iFrame').style.visibility="hidden";
+                    
+                    document.getElementById('place_order').type="button";
+                    document.getElementById('place_order').onclick=function() {
+        //                        document.getElementById('spayn-iFrame').style.visibility="visible";
+                        document.getElementById(self::IFRAME_ID).scrollIntoView( false );
+                        window.document.getElementById('place_order').visibility="hidden";
+                    };			
+                </script>
+            <?php
+        }
+
+
+        // Getters And Setters
+
+        public function getApiKey(){return $this->API_KEY;}
+
+        public function getAutoRedirect(){
+            if ($this->AUTO_REDIRECT==1){return 'false';}
+            else{return 'true';}
+        }
+
+        public function getAutoSubmit() {
+            if ($this->AUTO_SUBMIT==1) {
+                return 'true';
+            }
+            return 'false';
+        }
+        
+        public function getMerchant(){return $this->MERCHANT;}
+        public function getAccount(){return $this->ACCOUNT;}
+        public function getCurrencyCode(){
+            if($this->CURRENCY_CODE == NULL || $this->CURRENCY_CODE == '' ){
+                return $this->Currency_Code['EUR'];}
+            else{
+                $currencies=array_keys($this->Currency_Code);
+                return $this->Currency_Code[$currencies[$this->CURRENCY_CODE]];
+            }
+        }
+        public function getSecureType(){
+            if($this->SECURE_TYPE == NULL || $this->SECURE_TYPE == '' ){return $this->SecureTypes[0];}
+            else{return $this->SecureTypes[$this->SECURE_TYPE];}
+        }
+        public function getAmount(){
+            $amount=ceil(WC()->cart->total*self::AMOUNT_CENT_CONVERT_FOR_PAYMENT);
+            error_log('Amount is ' . $amount);
+            return $amount;
+        }
+        public function getUrl(){
+            if(((int)$this->ENVIRONMENT) == 0) {
+                return 'https://psp.spayn.es/client';
+            } else {
+                return 'https://test-psp.spayn.es/client';
+            }
+        }
+
+        public function getEnvironment(){
+            return $this->Environments[(int)$this->ENVIRONMENT];
+        }
+
+
+        // Private API 
         public function init_form_fields(){
             $this->form_fields = array(
                 'enabled' => array(
@@ -286,7 +359,7 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
                 'ENVIRONMENT' => array(
                     'title' => __( 'Entorno', 'woocommerce-spayn-payment-gateway' ),
                     'type' => 'select',
-                    'options' => ['TEST','PROD'],
+                    'options' => ['PRODUCTION','TEST'],
                     'default' => 'TEST',
                     'description' 	=> __( 'Entorno de trabajo.', 'woocommerce-spayn-payment-gateway' ),
                 ),
@@ -324,6 +397,13 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
                     'options' => ['Realiza el pedido','Muestra pantalla resumen'],
                     'default' => 'TEST',
                     'description' 	=> __( 'Comportamiento tras el pago.', 'woocommerce-spayn-payment-gateway' ),
+                ),
+                'AUTO_SUBMIT' => array(
+                    'title' => __( 'Enviar a comercio', 'woocommerce-spayn-payment-gateway' ),
+                    'type' => 'select',
+                    'options' => ['Enviar automáticamente','Dejar pantalla resumen'],
+                    'default' => '0',
+                    'description' 	=> __( 'Vuelve al comercio tras el pago automáticamente', 'woocommerce-spayn-payment-gateway' ),
                 ),
                 'SECURE_TYPE' => array(
                     'title' => __( 'Modalidad de Pago', 'woocommerce-spayn-payment-gateway' ),
@@ -445,7 +525,48 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
                     'desc_tip'		=> false,
                 ),
          );
-        }       
+        }
+
+        // Private API
+
+        function enqueue_scripts() {
+            wp_enqueue_style( 'woocommerce-spayn-default2', $this->assets_url( "/css/spayn-default-style.css" ), array(), false );
+        }
+
+        function includes() {
+            require_once dirname( WOOCOMMERCE_SPAYN_PLUGIN_FILE ) . '/utils/network-utils.php';
+            require_once dirname( WOOCOMMERCE_SPAYN_PLUGIN_FILE ) . '/apis/api.php';
+        }
+
+        function hooks() {
+            add_action( 'wp_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
+     
+            add_action( 'woocommerce_update_options_payment_gateways_'.$this->id, array($this, 'process_admin_options'));
+
+            // Register with hook
+            add_action( 'plugins_loaded', array( $this, 'spayn_payment_load_plugin_textdomain' ) );
+            add_action( 'woocommerce_proceed_to_checkout', function() {
+                error_log('Spayn: Checkout');
+            });
+            add_action( 'woocommerce_before_checkout_form', function() {
+                error_log('Spayn: Checkout Form');
+                global $is_safari;
+                if($is_safari){
+                    $gw=(new WC_spayn_Payment_Gateway())->getInstance();
+                    if(!isset($_GET['safari']) && ( $_COOKIE['SpayN_' . $gw->getEnvironment()]!='done')){
+                        setcookie('SpayN_' . $gw->getEnvironment(),'done',time()+86400, ['samesite' => 'None', 'secure' => true] );
+                        $uri=$gw->getUrl() . '/redirect?url=' . base64url_encode(wc_get_checkout_url());
+                        wp_redirect($uri);
+                    }
+                }
+            });
+            add_action( 'woocommerce_after_order_notes', array( $this, 'add_payment_field' ) );
+            add_action( 'woocommerce_order_details_after_order_table',  array( $this, 'display_spayn_order_details'), 10, 1 );
+            add_action( 'woocommerce_admin_order_data_after_shipping_address',  array( $this, 'display_spayn_order_details'), 10, 1 );
+                
+        }
+
+            
         /**
          * Admin Panel Options
          * - Options for bits like 'title' and availability on a country-by-country basis
@@ -453,120 +574,24 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
          * @since 1.0.0
          * @return void
          */
-        public function admin_options() {
+        function admin_options() {
             ?>
             <h3><?php _e( 'Custom Payment Settings', 'woocommerce-spayn-payment-gateway' ); ?></h3>
-                <div id="poststuff">
-                    <div id="post-body" class="metabox-holder columns-2">
-                        <div id="post-body-content">
-                            <table class="form-table">
-                                <?php $this->generate_settings_html();?>
-                            </table><!--/.form-table-->
-                        </div>
-                        <div id="postbox-container-1" class="postbox-container">
-                                <div id="side-sortables" class="meta-box-sortables ui-sortable"> 
-                                </div>
+            <div id="poststuff">
+                <div id="post-body" class="metabox-holder columns-2">
+                    <div id="post-body-content">
+                        <table class="form-table">
+                            <?php $this->generate_settings_html();?>
+                        </table><!--/.form-table-->
+                    </div>
+                    <div id="postbox-container-1" class="postbox-container">
+                            <div id="side-sortables" class="meta-box-sortables ui-sortable"> 
                             </div>
                         </div>
                     </div>
-                    <div class="clear"></div>
-                    <?php
-        }
-
-        public function validate_fields() {
-            return true;
-        }
-        public function generateRefNumber() {
-            //$result=strtoupper(substr($this->MERCHANT,0,2));
-            $result = substr(str_shuffle(str_repeat("ABCDEFGHIJKLMNOPQRSTUVWXYZ", 2)), 0, 2); //2 RANDOM CHARACTERS
-            $mt = explode(' ', microtime());
-            $result.=strval(((int)$mt[1]) * 1000 + ((int)round($mt[0] * 1000))); //EPOCH MILLISECONDS
-            $result.=strval(rand(0,9)); //RANDOM NUM
-            return $result;
-        }
-        public function process_payment( $order_id ) {
-            global $woocommerce;
-            $order = new WC_Order( $order_id );
-            $order->update_status($this->order_status, __( 'Awaiting payment', 'woocommerce-spayn-payment-gateway' ));
-            wc_reduce_stock_levels( $order_id );
-            if(isset($_POST[ $this->id.'-admin-note']) && trim($_POST[ $this->id.'-admin-note'])!=''){
-                $order->add_order_note(esc_html($_POST[ $this->id.'-admin-note']),1);
-            }
-            $woocommerce->cart->empty_cart();
-            return array(
-                'result' => 'success',
-                'redirect' => $this->get_return_url( $order )
-            );
-        }
-        public function clear_payment( $order_id ) {
-            global $woocommerce;
-            $order = new WC_Order( $order_id );
-            // Mark as on-hold (we're awaiting the cheque)
-            $order->update_status($this->order_status, __( 'Awaiting payment', 'woocommerce-spayn-payment-gateway' ));
-            // Reduce stock levels
-            wc_reduce_stock_levels( $order_id );
-            if(isset($_POST[ $this->id.'-admin-note']) && trim($_POST[ $this->id.'-admin-note'])!=''){
-                $order->add_order_note(esc_html($_POST[ $this->id.'-admin-note']),1);
-            }
-            // Remove cart
-            $woocommerce->cart->empty_cart();
-            // Return thankyou redirect
-        }
-        public function payment_fields(){
-            ?>
-                <script type="text/javascript">
-                var paybutton=document.getElementById('place_order')
-                if(paybutton!=null){
-                    // paybutton.style.visibility="hidden";
-                }
-                    document.getElementById('spayn-iFrame').style.visibility="hidden";
-                    
-                    document.getElementById('place_order').type="button";
-                    document.getElementById('place_order').onclick=function() {
-//                        document.getElementById('spayn-iFrame').style.visibility="visible";
-                        document.getElementById('spayn-iFrame').scrollIntoView( false );
-                        window.document.getElementById('place_order').visibility="hidden";
-                    };*/				
-                </script>
+                </div>
+            <div class="clear"></div>
             <?php
-        }
-
-
-        // Getters And Setters
-
-        public function getApiKey(){return $this->API_KEY;}
-
-        public function getAutoRedirect(){
-            if ($this->AUTO_REDIRECT==1){return 'false';}
-            else{return 'true';}
-        }
-        
-        public function getMerchant(){return $this->MERCHANT;}
-        public function getAccount(){return $this->ACCOUNT;}
-        public function getCurrencyCode(){
-            if($this->CURRENCY_CODE == NULL || $this->CURRENCY_CODE == '' ){
-                return $this->Currency_Code['EUR'];}
-            else{
-                $currencies=array_keys($this->Currency_Code);
-                return $this->Currency_Code[$currencies[$this->CURRENCY_CODE]];
-            }
-        }
-        public function getSecureType(){
-            if($this->SECURE_TYPE == NULL || $this->SECURE_TYPE == '' ){return $this->SecureTypes[0];}
-            else{return $this->SecureTypes[$this->SECURE_TYPE];}
-        }
-        public function getAmount(){
-            $amount=ceil(WC()->cart->total*100.0);
-            error_log('Amount is ' . $amount);
-            return $amount;
-        }
-        public function getUrl(){
-            if(((int)$this->ENVIRONMENT) > 0){return 'https://psp.spayn.es/client';}
-            else{return 'https://test-psp.spayn.es/client';}
-        }
-
-        public function getEnvironment(){
-            return $Environments[(int)$this->ENVIRONMENT];
         }
     }
 

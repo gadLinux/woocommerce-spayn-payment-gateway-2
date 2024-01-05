@@ -78,8 +78,8 @@ class tokenRequest {
                 $result.=$this->addField('FRAME_LABEL_COLOR',$this->FRAME_LABEL_COLOR);
                 $result.=$this->addField('BUTTON_BACKGROUND_COLOR',$this->BUTTON_BACKGROUND_COLOR);
                 $result.=$this->addField('BUTTON_LABEL_COLOR',$this->BUTTON_LABEL_COLOR);
-                $result.=$this->addField('AUTO_REDIRECT',"false");
-                $result.=$this->addField('AUTO_SUBMIT', "false");
+                $result.=$this->addField('AUTO_REDIRECT',$this->AUTO_REDIRECT);
+                $result.=$this->addField('AUTO_SUBMIT',$this->AUTO_SUBMIT);
                 $result.=$this->addField('TEXT_LABEL_AMOUNT',$this->TEXT_LABEL_AMOUNT);
                 $result.=$this->addField('TEXT_LABEL_CONCEPT',$this->TEXT_LABEL_CONCEPT);
                 $result.=$this->addField('TEXT_LABEL_ALIAS',$this->TEXT_LABEL_ALIAS);
@@ -110,10 +110,10 @@ class tokenRequest {
         if($this->SPAYN!=NULL){
             $url=$this->SPAYN->getUrl();
             $environment=$this->SPAYN->getEnvironment();
-            $is_test_env=($environment=='test') ? true : false;
+            $is_test_env=($environment=='TEST') ? true : false;
         } 
 
-        error_log('Sending a login request to ' . $url . '/brw/token/request' . 'in mode '. $this->SPAYN->getEnvironment());
+        error_log('Sending a login request to [' . $url . '/brw/token/request] in mode '. $this->SPAYN->getEnvironment());
         $response = $this->post($url . '/brw/token/request', $message, !$is_test_env);
 
         if($response!=NULL) {
