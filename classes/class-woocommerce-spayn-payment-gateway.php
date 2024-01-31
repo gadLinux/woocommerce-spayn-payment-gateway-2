@@ -213,9 +213,6 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
             }
         }
 
-        function spayn_payment_load_plugin_textdomain() {
-            load_plugin_textdomain( 'woocommerce-spayn-payment-gateway', FALSE, basename( dirname( __FILE__ ) ) . '/languages/' );
-        }
 
         public function getLogedUser(){
             if(function_exists('wp_get_current_user')){
@@ -265,21 +262,24 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
             $woocommerce->cart->empty_cart();
             // Return thankyou redirect
         }
+
+
+
         public function payment_fields(){
             ?>
                 <script type="text/javascript">
-                    var paybutton=document.getElementById('place_order')
+                    var paybutton=document.getElementById('place_order');
                     if(paybutton!=null){
-                        // paybutton.style.visibility="hidden";
+                        paybutton.style.visibility="hidden";
+                        paybutton.value = '<?= __('Rellene los datos y continúe realice el pago') ?>';
+                        paybutton.innerHTML = '<?= __('Rellene los datos y continúe realice el pago') ?>';
+                        paybutton.onclick=function() {
+                        console.log('Payment button clicked!');
+                        document.getElementById('<?=self::IFRAME_ID?>').style.visibility="visible";
+                            document.getElementById('<?=self::IFRAME_ID?>').scrollIntoView( false );
+                            //window.document.getElementById('place_order').visibility="hidden";
+                        };			
                     }
-                    document.getElementById('spayn-iFrame').style.visibility="hidden";
-                    
-                    document.getElementById('place_order').type="button";
-                    document.getElementById('place_order').onclick=function() {
-        //                        document.getElementById('spayn-iFrame').style.visibility="visible";
-                        document.getElementById(self::IFRAME_ID).scrollIntoView( false );
-                        window.document.getElementById('place_order').visibility="hidden";
-                    };			
                 </script>
             <?php
         }
@@ -334,6 +334,11 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
 
 
         // Private API 
+
+        function spayn_payment_load_plugin_textdomain() {
+            load_plugin_textdomain( 'woocommerce-spayn-payment-gateway-2', FALSE, basename( dirname( __FILE__ ) ) . '/languages/' );
+        }
+
         public function init_form_fields(){
             $this->form_fields = array(
                 'enabled' => array(
@@ -399,11 +404,11 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
                     'description' 	=> __( 'Comportamiento tras el pago.', 'woocommerce-spayn-payment-gateway' ),
                 ),
                 'AUTO_SUBMIT' => array(
-                    'title' => __( 'Enviar a comercio', 'woocommerce-spayn-payment-gateway' ),
+                    'title' => __( 'Enviar tarjeta automáticamente', 'woocommerce-spayn-payment-gateway' ),
                     'type' => 'select',
-                    'options' => ['Enviar automáticamente','Dejar pantalla resumen'],
+                    'options' => ['Dejar al usuario meter la tarjeta','Envia automáticamente'],
                     'default' => '0',
-                    'description' 	=> __( 'Vuelve al comercio tras el pago automáticamente', 'woocommerce-spayn-payment-gateway' ),
+                    'description' 	=> __( 'Hace que si hay una tarjeta rellenada en el formulario de tarjetas, se envíe automáticamente para pago sin dejar que el usuario revise. Por defecto, deja al usuario elegir la tarjeta.', 'woocommerce-spayn-payment-gateway' ),
                 ),
                 'SECURE_TYPE' => array(
                     'title' => __( 'Modalidad de Pago', 'woocommerce-spayn-payment-gateway' ),
@@ -530,7 +535,7 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
         // Private API
 
         function enqueue_scripts() {
-            wp_enqueue_style( 'woocommerce-spayn-default2', $this->assets_url( "/css/spayn-default-style.css" ), array(), false );
+            wp_enqueue_style( 'woocommerce-spayn-default', $this->assets_url( "/css/spayn-default-style.css" ), array(), false );
         }
 
         function includes() {

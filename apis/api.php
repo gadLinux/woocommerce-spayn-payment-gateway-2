@@ -43,7 +43,7 @@ class tokenRequest {
         if($gateway!=NULL){
             $this->SECURE_TYPE=$gateway->getSecureType();
             $this->AUTO_REDIRECT=$gateway->getAutoRedirect();
-            $this->AUTO_SUBMIT=false;
+            $this->AUTO_SUBMIT=$gateway->getAutoSubmit();
             $this->BASE_BACKGROUND_COLOR=$gateway->BASE_BACKGROUND_COLOR;
             $this->FRAME_BACKGROUND_COLOR=$gateway->FRAME_BACKGROUND_COLOR;
             $this->FRAME_LABEL_COLOR=$gateway->FRAME_LABEL_COLOR;
