@@ -43,7 +43,7 @@ $active_plugins = apply_filters('active_plugins', get_option('active_plugins'));
 
 
 if(spayn_payment_is_woocommerce_active()){
-	// Include WC_Payment_Gateway thatś required for our plugin to work
+	// Include WC_Payment_Gateway in the payment options
 	add_filter('woocommerce_payment_gateways', 'woocommerce_spayn_add_payment_gateway');
 	function woocommerce_spayn_add_payment_gateway( $gateways ){
 		$gateways[] = 'WC_Spayn_Payment_Gateway';

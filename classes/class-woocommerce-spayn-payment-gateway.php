@@ -169,7 +169,6 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
         }
    
         public function assets_url($uri){
-            error_log('Asset loading ' .$uri);
             return $this->plugin_url('/assets/'.$uri);
         } 
 
@@ -181,30 +180,30 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
 
 
         function display_spayn_order_details($order){
-            echo '<p><strong>'.__('SPayN Payment Reference').':</strong> ' . get_post_meta( $order->id, 'SPayN Merchant Operation', true ). '</p>';
+            echo '<p><strong>'.__('SPayN Payment Reference').':</strong> ' . get_post_meta( $order->id, 'merchantOperation', true ). '</p>';
         }
 
-        function add_payment_field($checkout)
-        {
-            ob_start();
+        // function add_payment_field($checkout)
+        // {
+        //     ob_start();
  
-            $apiClient=new tokenRequest($this);
-            $field_label=empty($this->TEXT_LABEL_OPERATION_CODE) ? __('SPayN Merchant Operation') : $this->TEXT_LABEL_OPERATION_CODE;
-            $payment_ref=$apiClient->getMerchantOperation();
-            printf('<div id="%1$s" class="spayn-payment-iframe"><p><h3>%2$s</h3><br><iframe sandbox="allow-same-origin allow-scripts allow-popups allow-forms" frameBorder="0" align="center" class="spayn-payment-iframe-contents" frameborder="no" src="%3$s"></iframe></div>',
-                self::IFRAME_ID, $this->title, $apiClient->requestTokenAndReturnPaymentIframeContents());
-                $payment_field = woocommerce_form_field('spayn_payment_ref', array(
-                    'type' => 'text',
-                    'class' => array(
-                    'spayn-payment-field-class form-row-wide'
-                ) ,
-                'label' => $field_label,
-                'placeholder' => __('Operation reference number') ,
-                'required' => false,
-            ) , $payment_ref);
+        //     $apiClient=new spainApiClient($this);
+        //     $field_label=empty($this->TEXT_LABEL_OPERATION_CODE) ? __('SPayN Merchant Operation') : $this->TEXT_LABEL_OPERATION_CODE;
+        //     $payment_ref=$apiClient->getMerchantOperation();
+        //     printf('<div id="%1$s" class="spayn-payment-iframe"><p><h3>%2$s</h3><br><iframe sandbox="allow-same-origin allow-scripts allow-popups allow-forms" frameBorder="0" align="center" class="spayn-payment-iframe-contents" frameborder="no" src="%3$s"></iframe></div>',
+        //         self::IFRAME_ID, $this->title, $apiClient->requestTokenAndReturnPaymentIframeContents());
+        //         $payment_field = woocommerce_form_field('spayn_payment_ref', array(
+        //             'type' => 'text',
+        //             'class' => array(
+        //             'spayn-payment-field-class form-row-wide'
+        //         ) ,
+        //         'label' => $field_label,
+        //         'placeholder' => __('Operation reference number') ,
+        //         'required' => false,
+        //     ) , $payment_ref);
 
-            printf('<div id="spayn_payment_field">%1$s</div>', $payment_field);
-        }
+        //     printf('<div id="spayn_payment_field">%1$s</div>', $payment_field);
+        // }
 
         function payment_ref_update_order_meta($order_id)
         {
@@ -234,21 +233,158 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
             $result.=strval(rand(0,9)); //RANDOM NUM
             return $result;
         }
+
         public function process_payment( $order_id ) {
-            global $woocommerce;
-            $order = new WC_Order( $order_id );
-            $order->update_status($this->order_status, __( 'Awaiting payment', 'woocommerce-spayn-payment-gateway' ));
-            wc_reduce_stock_levels( $order_id );
-            if(isset($_POST[ $this->id.'-admin-note']) && trim($_POST[ $this->id.'-admin-note'])!=''){
-                $order->add_order_note(esc_html($_POST[ $this->id.'-admin-note']),1);
+            $order = wc_get_order( $order_id );
+            error_log('Processing');
+            $apiClient=new spainApiClient($this);
+
+            $merchantOperation = $order->get_meta('merchantOperation');
+            if(empty($merchantOperation)) {
+                $merchantOperation=$payment_ref=$apiClient->getMerchantOperation();
+                $order->update_meta_data('merchantOperation', $merchantOperation); // Add the custom field
+                error_log("Getting a new merchant operation from API " . $merchantOperation);
+                $order->save_meta_data(); // Save the data
             }
-            $woocommerce->cart->empty_cart();
             return array(
-                'result' => 'success',
-                'redirect' => $this->get_return_url( $order )
+                    'result'        => 'success',
+                    'redirect'      => $this->get_checkout_url($order)
             );
         }
+
+        private function get_checkout_url($order) {
+            if ( version_compare( WOOCOMMERCE_VERSION, '2.1', '<' ) ) {
+                $redirect_url = add_query_arg('order', $order->get_id(), add_query_arg('key', $order->get_order_key(), get_permalink(wc_get_page_id('pay'))));
+            } else {
+                $redirect_url = $order->get_checkout_payment_url(true);
+            }
+            return $redirect_url;
+        }
+
+        private function payment_completed($order, $paymentAuth) {
+            if($order->get_status() != $this->order_status) {
+                $order->payment_complete( $paymentAuth );
+                $order->update_status( $this->order_status );
+                error_log("Order updated, paid ".$paymentAuth);
+            }
+        }
+
+        private function payment_onhold($order) {
+            if($order->get_status() != "wc-on-hold") {
+                $order->update_status( 'wc-on-hold', __( 'Esperando la confirmación del pago por Spayn', $this->id ) );
+            }
+        }
+
+        private function get_iframe_url($destination_url, $token, $tracking_code) {
+            $token=urlencode($token);
+            $destination_url=urlencode($destination_url);
+            $tracking_code=urlencode($tracking_code);
+            return $this->plugin_url('payment-ongoing-iframe.php').'?URL='.$destination_url.'&TOKEN='.$token.'&TRACKING_CODE='.$tracking_code;
+        }
+
+        private function get_error_url($description, $debug_id) {
+            $description=urlencode($description);
+            $debug_id=urlencode($debug_id);
+
+            $error_iframe=$this->plugin_url('payment-error-iframe.php') . '?MESSAGE=' . $description . '&TRACE_ID=' . $debug_id;
+            return $this->plugin_url('payment-error-iframe.php').'?MESSAGE=' . $description . '&TRACE_ID=' . $debug_id;
+        }
+
+        private function refresh_order_merchant_operation($order) {
+            $merchantOperation=$this->generateRefNumber();
+            error_log("New Number ".$merchantOperation);
+            $order->update_meta_data('merchantOperation',$merchantOperation);
+            $order->delete_meta_data('token');
+            $order->delete_meta_data('destinationURL');
+            $order->save_meta_data();
+            return $merchantOperation;
+        }
+
+        private function handle_payment_status($apiClient, $paymentStatus, $order) {
+            $merchantOperation = $order->get_meta('merchantOperation');
+ 
+            if($paymentStatus['PAYMENT']['STATUS'] == '000') {
+                error_log("Payment already done! [".$order->get_status().'] ->'.$this->get_return_url($order));
+                $this->payment_completed($order, $paymentStatus['PAYMENT']['AUTH_CODE']);
+                wp_safe_redirect( $this->get_return_url($order) );
+                exit;
+          
+            } else if($paymentStatus['PAYMENT']['STATUS'] == '500') { // Not finished
+                $merchantOperation=$this->refresh_order_merchant_operation($order);
+                
+            } 
+ 
+            $token = $order->get_meta('token');
+            $destinationURL = $order->get_meta('destinationURL');
+            //$this->payment_onhold($order);
+            $field_label=empty($this->TEXT_LABEL_OPERATION_CODE) ? __('SPayN Merchant Operation') : $this->TEXT_LABEL_OPERATION_CODE;
+            error_log("Processing merchant operation ". $merchantOperation."...");
+            if(empty($token)){
+                $result = $apiClient->requestToken();
+                if(isset($result['TOKEN'])) {
+                    error_log("New token is [".$result['TOKEN']."]->".$result['DESTINATION_URL']);
+                    $order->update_meta_data('token', $result['TOKEN']);
+                    $order->update_meta_data('destinationURL', $result['DESTINATION_URL']);
+                    $order->save_meta_data();
+                    $token = $result['TOKEN'];
+                    $destinationURL= $result['DESTINATION_URL'];
+                }else{
+                    $this->refresh_order_merchant_operation($order);
+                    printf('<div id="%1$s" class="spayn-payment-iframe"><p><h3>%2$s</h3><br><iframe sandbox="allow-same-origin allow-scripts allow-popups allow-forms" frameBorder="0" align="center" class="spayn-payment-iframe-contents" frameborder="no" src="%3$s"></iframe></div>',
+                        self::IFRAME_ID, $this->title, $this->get_error_url($result['DESCRIPTION'], $result['DEBUG_ID']));
+                    return;
+                }
+             }
+            if(true) {
+                printf('<div id="%1$s" class="spayn-payment-iframe"><p><h3>%2$s</h3><br><iframe sandbox="allow-same-origin allow-scripts allow-popups allow-forms" frameBorder="0" align="center" class="spayn-payment-iframe-contents" frameborder="no" src="%3$s"></iframe></div>',
+                self::IFRAME_ID, $this->title, $this->get_iframe_url($destinationURL, $token, $merchantOperation));
+            }else{
+                printf('<div id="%1$s" class="spayn-payment-iframe"><p><h3>%2$s</h3><br>'
+                            .'<a href="%3$s" target="_blank" class="button">Pagar ahora</a>'.
+                        '</div>',
+                    self::IFRAME_ID, $this->title, $this->get_iframe_url($destinationURL, $token, $merchantOperation));
+            }
+            return array(
+                'result'        => 'success',
+                'redirect'      => $this->get_return_url($order) 
+            );
+        }
+
+        function receipt_page( $order_id ) {
+            // echo '<p>'.__( 'Redirigiendo a Spayn.', 'wc-gateway-cecabank' ).'</p>';
+
+            $order = wc_get_order( $order_id );
+            $merchantOperation = $order->get_meta('merchantOperation');
+            // echo '<p>' . $order .'</p>';
+            $apiClient=new spainApiClient($this);
+            if(isset($merchantOperation)) {
+                $apiClient->setMerchantOperation($merchantOperation);
+                $paymentStatus = $apiClient->requestPaymentStatus();
+                return $this->handle_payment_status($apiClient, $paymentStatus, $order);
+            } else {
+                error_log("We cannot process a payment for an order that doesn't have merchant operation code: " . $order->id);
+            }
+            
+        //     $order = wc_get_order( $order_id );
+
+        //     $config = $this-> get_client_config();
+
+        //     $cecabank_client = new Cecabank\Client($config);
+
+        //     $result = $this->process_regular_payment( $cecabank_client, $order, $order_id );
+
+        //     // Mark as on-hold (we're awaiting the payment)
+        //     // $order->update_status( 'on-hold', __( 'Esperando la confirmación del pago por Cecabank', 'wc-gateway-cecabank' ) );
+
+        //     // if ( version_compare( WOOCOMMERCE_VERSION, '2.0', '<' ) ) {
+        //     //     $woocommerce->cart->empty_cart();
+        //     // } else {
+        //     //     WC()->cart->empty_cart();
+        //     // }
+        }
+
         public function clear_payment( $order_id ) {
+            error_log("Clear payment");
             global $woocommerce;
             $order = new WC_Order( $order_id );
             // Mark as on-hold (we're awaiting the cheque)
@@ -263,11 +399,14 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
             // Return thankyou redirect
         }
 
-
+        public function thankyou_page() {
+            error_log("Thank you page");
+            echo "Gracias por su compra";
+        }
 
         public function payment_fields(){
             ?>
-                <script type="text/javascript">
+                <!-- <script type="text/javascript">
                     var paybutton=document.getElementById('place_order');
                     if(paybutton!=null){
                         paybutton.style.visibility="hidden";
@@ -280,8 +419,50 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
                             //window.document.getElementById('place_order').visibility="hidden";
                         };			
                     }
-                </script>
+                </script> -->
             <?php
+        }
+
+
+
+        /**
+         * Check for Cecabank notification
+         *
+         * @access public
+         * @return void
+         */
+        function check_notification() {
+            global $woocommerce;
+            error_log("Check_notification");
+            // $config = $this-> get_client_config();
+
+            // $cecabank_client = new Cecabank\Client($config);
+
+            // try {
+            //     $cecabank_client->checkTransaction($_POST);
+            // } catch (\Exception $e) {
+            //     $message = __('Ha ocurrido un error con el pago: '.$e->getMessage(), 'wc-gateway-cecabank');
+            //     $order = wc_get_order( $_POST['Num_operacion'] );
+            //     $order->update_status('failed', $message );
+            //     die();
+            // }
+
+            // $order = wc_get_order( $_POST['Num_operacion'] );
+
+            // if ( $order->has_status( 'completed' ) ) {
+            //     die();
+            // }
+
+            // // Payment completed
+            // $order->add_order_note( __('Pago completado por Cecabank con referencia: '.$_POST['Referencia'], 'wc-gateway-cecabank') );
+            // $order->payment_complete( $_POST['Referencia'] );
+
+            // // Set order as completed if user did set up it
+            // if ( 'Y' == $this->set_completed ) {
+            //     $order->update_status( 'completed' );
+            // }
+
+            // die($cecabank_client->successCode());
         }
 
 
@@ -317,7 +498,6 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
         }
         public function getAmount(){
             $amount=ceil(WC()->cart->total*self::AMOUNT_CENT_CONVERT_FOR_PAYMENT);
-            error_log('Amount is ' . $amount);
             return $amount;
         }
         public function getUrl(){
@@ -565,10 +745,19 @@ if ( ! class_exists( 'WC_Spayn_Payment_Gateway' ) ) {
                     }
                 }
             });
-            add_action( 'woocommerce_after_order_notes', array( $this, 'add_payment_field' ) );
+
+            add_action( 'woocommerce_receipt_'.$this->id, array( $this, 'receipt_page' ) );
+
+            // add_action( 'woocommerce_after_order_notes', array( $this, 'add_payment_field' ) );
             add_action( 'woocommerce_order_details_after_order_table',  array( $this, 'display_spayn_order_details'), 10, 1 );
             add_action( 'woocommerce_admin_order_data_after_shipping_address',  array( $this, 'display_spayn_order_details'), 10, 1 );
-                
+            if ( version_compare( WOOCOMMERCE_VERSION, '2.0', '<' ) ) {
+                // Check for gateway messages using WC 1.X format
+                add_action( 'init', array( $this, 'check_notification' ) );
+            } else {
+                // Payment listener/API hook (WC 2.X)
+                add_action( 'woocommerce_api_' . strtolower( get_class( $this ) ), array( $this, 'check_notification' ) );
+            } 
         }
 
             

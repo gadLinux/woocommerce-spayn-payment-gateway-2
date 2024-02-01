@@ -1,9 +1,5 @@
 <?php
-
-
-
-
-class tokenRequest {
+class spainApiClient {
     private $MERCHANT;
     private $ACCOUNT;
     private $CLIENT;
@@ -30,7 +26,7 @@ class tokenRequest {
     private $TEXT_LABEL_PAN;
     private $TEXT_LABEL_AUTH_CODE;
     private $TEXT_BUTTON_BACK;
-    private $SPAYN;
+    private $GATEWAY;
     public function __construct($gateway){
         $this->MERCHANT = $gateway->MERCHANT;
         $this->CLIENT = $gateway->getLogedUser();
@@ -38,8 +34,7 @@ class tokenRequest {
         $this->CURRENCY = $gateway->getCurrencyCode();
         $this->MERCHANT_OPERATION = $gateway->generateRefNumber();
         $this->REDIRECT_URL = $gateway->plugin_url('paymentcallback.php');
-        $this->SIGNATURE = hash_hmac('sha256', $this->MERCHANT . $this->ACCOUNT . $this->CLIENT . $this->AMOUNT . $this->CURRENCY . $this->MERCHANT_OPERATION . $this->REDIRECT_URL, hexToStr($gateway->API_KEY));   
-        $this->SPAYN=$gateway;
+        $this->GATEWAY=$gateway;
         if($gateway!=NULL){
             $this->SECURE_TYPE=$gateway->getSecureType();
             $this->AUTO_REDIRECT=$gateway->getAutoRedirect();
@@ -61,77 +56,91 @@ class tokenRequest {
             $this->TEXT_BUTTON_BACK=$gateway->TEXT_BUTTON_BACK;     
         }
     }
-    private function getJSon(){
-        $result='{';
-            $result.=$this->addField('MERCHANT',$this->MERCHANT);
-            $result.=$this->addField('ACCOUNT',$this->ACCOUNT);
-            $result.=$this->addField('CLIENT',$this->CLIENT);
-            $result.=$this->addField('AMOUNT',$this->AMOUNT);
-            $result.=$this->addField('CURRENCY',$this->CURRENCY);
-            $result.=$this->addField('MERCHANT_OPERATION',$this->MERCHANT_OPERATION);
-            $result.=$this->addField('REDIRECT_URL',$this->REDIRECT_URL);
-            if(($this->SPAYN)!=NULL){
-                $result.='"PARAMS":{';
-                $result.=$this->addField('SECURE_TYPE',$this->SECURE_TYPE);
-                $result.=$this->addField('BASE_BACKGROUND_COLOR',$this->BASE_BACKGROUND_COLOR);
-                $result.=$this->addField('FRAME_BACKGROUND_COLOR',$this->FRAME_BACKGROUND_COLOR);
-                $result.=$this->addField('FRAME_LABEL_COLOR',$this->FRAME_LABEL_COLOR);
-                $result.=$this->addField('BUTTON_BACKGROUND_COLOR',$this->BUTTON_BACKGROUND_COLOR);
-                $result.=$this->addField('BUTTON_LABEL_COLOR',$this->BUTTON_LABEL_COLOR);
-                $result.=$this->addField('AUTO_REDIRECT',$this->AUTO_REDIRECT);
-                $result.=$this->addField('AUTO_SUBMIT',$this->AUTO_SUBMIT);
-                $result.=$this->addField('TEXT_LABEL_AMOUNT',$this->TEXT_LABEL_AMOUNT);
-                $result.=$this->addField('TEXT_LABEL_CONCEPT',$this->TEXT_LABEL_CONCEPT);
-                $result.=$this->addField('TEXT_LABEL_ALIAS',$this->TEXT_LABEL_ALIAS);
-                $result.=$this->addField('TEXT_LABEL_CARD',$this->TEXT_LABEL_CARD);
-                $result.=$this->addField('TEXT_LABEL_EXP_MONTH',$this->TEXT_LABEL_EXP_MONTH);
-                $result.=$this->addField('TEXT_LABEL_EXP_YEAR',$this->TEXT_LABEL_EXP_YEAR);
-                $result.=$this->addField('TEXT_LABEL_PAYMENT_DATE',$this->TEXT_LABEL_PAYMENT_DATE);
-                $result.=$this->addField('TEXT_LABEL_PAN',$this->TEXT_LABEL_PAN);
-                $result.=$this->addField('TEXT_LABEL_AUTH_CODE',$this->TEXT_LABEL_AUTH_CODE);
-                $result.=$this->addField('TEXT_BUTTON_BACK',$this->TEXT_BUTTON_BACK);
-                $result=substr($result,0,-1) . "},";
-            }
-            $result.=$this->addField('SIGNATURE',$this->SIGNATURE);
-            $result=substr($result,0,-1) . "}";
-            return $result;
-        }
-    private function addField($name,$value){
-        if($value != NULL && $value!=NULL){return '"' . $name . '":"' . $value . '",'; }
-    }
+
+   
+
     public function getMerchantOperation(){return $this->MERCHANT_OPERATION;}    
-    
-    public function requestTokenAndReturnPaymentIframeContents() {
-        $message=$this->getJSon();
-        // Safe defaults
-        $url='https://test-psp.spayn.es/client'; 
-        $is_test_env=false;
+    public function setMerchantOperation($merchantOperation){$this->MERCHANT_OPERATION=$merchantOperation;}    
 
-        if($this->SPAYN!=NULL){
-            $url=$this->SPAYN->getUrl();
-            $environment=$this->SPAYN->getEnvironment();
-            $is_test_env=($environment=='TEST') ? true : false;
-        } 
+    public function requestToken() {
+        $message=$this->getTokenRequest();
+        $endpoint = '/brw/token/request';
+        $url = $this->get_endpoint($endpoint);
 
-        error_log('Sending a login request to [' . $url . '/brw/token/request] in mode '. $this->SPAYN->getEnvironment());
-        $response = $this->post($url . '/brw/token/request', $message, !$is_test_env);
-
+        error_log('Sending a iframe content request [' . $url . ']['.$this->MERCHANT_OPERATION.'] in mode ' . $this->GATEWAY->getEnvironment());
+        $response = $this->post($url, $message, !$this->is_test_environment());
         if($response!=NULL) {
             $json = json_decode($response, TRUE);
             if(isset($json['CODE']) && $json['CODE']=='PARAM') {
                 error_log('We had an error while sending the request: [' . $json['DESCRIPTION'] . '] Track code: ' . $json['DEBUG_ID']); 
-                $error_iframe=$this->SPAYN->plugin_url('payment-error-iframe.php') . '?MESSAGE=' . $json['DESCRIPTION'] . '&TRACE_ID=' . $json['DEBUG_ID'];
-                return $error_iframe;
+                $result = array();
+                $result['DESCRIPTION']=$json['DESCRIPTION'];
+                $result['DEBUG_ID']=$json['DEBUG_ID'];
+                return $result;
             } 
             if(isset($json['TOKEN']) && str_contains($json['URL'], 'spayn.es/client')) {
-                $destination_url=urlencode($json['URL']);
-                $token=urlencode($json['TOKEN']);
-                $traking_code=urlencode($json['MERCHANT_OPERATION']);
-                $ongoing_iframe=$this->SPAYN->plugin_url('payment-ongoing-iframe.php').'?URL='.$destination_url.'&TOKEN='.$token.'&TRACKING_CODE='.$traking_code;
-                return $ongoing_iframe;
+                $result = array();
+                $result['DESTINATION_URL']=$json['URL'];
+                $result['TOKEN']=$json['TOKEN'];
+                $result['MERCHANT_OPERATION']=$json['MERCHANT_OPERATION'];
+                return $result;
             }
         }       
-        return "";
+        return array();
+    }
+
+ 
+
+    private function get_endpoint($path) {
+        // Safe defaults
+        $url='https://test-psp.spayn.es/client'; 
+
+        if($this->GATEWAY!=NULL){
+            $url=$this->GATEWAY->getUrl();
+        } 
+        return $url.$path;
+    }
+
+    private function is_test_environment() {
+        if($this->GATEWAY!=NULL){
+            $environment=$this->GATEWAY->getEnvironment();
+            return ($environment=='TEST') ? true : false;
+        }
+        return true;
+    }
+
+    public function requestPaymentStatus() {
+        $message=$this->getPaymentStatusRequest($this->MERCHANT_OPERATION);
+        $endpoint = '/server/conciliation';
+        $url = $this->get_endpoint($endpoint);
+
+        $not_available = array();
+        $not_available['PAYMENT']['STATUS']="403";
+        $not_available['PAYMENT']['STATUS_DESCRIPTION']="NOT_FOUND";
+
+        if(!isset($this->MERCHANT_OPERATION)){
+            return $not_available;
+        }
+
+        error_log('Sending payment status request [' . $url . ']['.$this->MERCHANT_OPERATION.'] in mode ' . $this->GATEWAY->getEnvironment());
+        $response = $this->post($url, $message, !$this->is_test_environment());
+        if($response==NULL) {
+            error_log("No response");
+            return $not_available;
+        }
+        $json = json_decode($response, TRUE);
+        if(isset($json['CODE']) && $json['CODE']=='PARAM') {
+            error_log('We had an error while sending the request: [' . $json['DESCRIPTION'] . '] Track code: ' . $json['DEBUG_ID'].'\n'.$message); 
+            return $not_available;
+        }
+
+        if(isset($json['TXS']) && isset($json['TXS'][$this->MERCHANT_OPERATION])) {
+            error_log('We found the payment: ' . $response); 
+            return $json['TXS'][$this->MERCHANT_OPERATION];
+        } 
+        
+        error_log("Payment is not registered");
+        return $not_available;     
     }
 
     function post($url,$postdata, $verifycert = true){
@@ -143,6 +152,61 @@ class tokenRequest {
         curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, $verifycert);
         $result = curl_exec($ch);
         return $result;
+    }
+
+    // Private methods
+    private function getTokenRequest(){
+        $request = array();
+        $request['MERCHANT'] = $this->MERCHANT;
+        $request['ACCOUNT'] = $this->ACCOUNT;
+        $request['CLIENT'] = $this->CLIENT;
+        $request['AMOUNT'] = $this->AMOUNT;
+        $request['CURRENCY'] = $this->CURRENCY;
+        $request['MERCHANT_OPERATION'] = $this->MERCHANT_OPERATION;
+        $request['REDIRECT_URL'] = $this->REDIRECT_URL;
+        if(($this->GATEWAY)!=NULL){
+            $request['PARAMS']['SECURE_TYPE'] = $this->SECURE_TYPE;
+            $request['PARAMS']['BASE_BACKGROUND_COLOR'] = $this->BASE_BACKGROUND_COLOR;
+            $request['PARAMS']['FRAME_BACKGROUND_COLOR'] = $this->FRAME_BACKGROUND_COLOR;
+            $request['PARAMS']['FRAME_LABEL_COLOR'] = $this->FRAME_LABEL_COLOR;
+            $request['PARAMS']['BUTTON_BACKGROUND_COLOR'] = $this->BUTTON_BACKGROUND_COLOR;
+            $request['PARAMS']['BUTTON_LABEL_COLOR'] = $this->BUTTON_LABEL_COLOR;
+            $request['PARAMS']['AUTO_REDIRECT'] = $this->AUTO_REDIRECT;
+            $request['PARAMS']['AUTO_SUBMIT'] = $this->AUTO_SUBMIT;
+            $request['PARAMS']['TEXT_LABEL_AMOUNT'] = $this->TEXT_LABEL_AMOUNT;
+            $request['PARAMS']['TEXT_LABEL_CONCEPT'] = $this->TEXT_LABEL_CONCEPT;
+            $request['PARAMS']['TEXT_LABEL_ALIAS'] = $this->TEXT_LABEL_ALIAS;
+            $request['PARAMS']['TEXT_LABEL_CARD'] = $this->TEXT_LABEL_CARD;
+            $request['PARAMS']['TEXT_LABEL_EXP_MONTH'] = $this->TEXT_LABEL_EXP_MONTH;
+            $request['PARAMS']['TEXT_LABEL_EXP_YEAR'] = $this->TEXT_LABEL_EXP_YEAR;
+            $request['PARAMS']['TEXT_LABEL_PAYMENT_DATE'] = $this->TEXT_LABEL_PAYMENT_DATE;
+            $request['PARAMS']['TEXT_LABEL_PAN'] = $this->TEXT_LABEL_PAN;
+            $request['PARAMS']['TEXT_LABEL_AUTH_CODE'] = $this->TEXT_LABEL_AUTH_CODE;
+            $request['PARAMS']['TEXT_BUTTON_BACK'] = $this->TEXT_BUTTON_BACK;
+        }
+        $request['SIGNATURE'] = hash_hmac('sha256', 
+            $this->MERCHANT . 
+            $this->ACCOUNT . 
+            $this->CLIENT . 
+            $this->AMOUNT . 
+            $this->CURRENCY . 
+            $this->MERCHANT_OPERATION . 
+            $this->REDIRECT_URL, 
+            hexToStr($this->GATEWAY->API_KEY));
+        return json_encode(array_filter($request));
+    }
+
+    private function getPaymentStatusRequest($operation){
+        $request = array();
+        $request['MERCHANT'] = $this->MERCHANT;
+        $request['MERCHANT_OPERATION'] = $this->MERCHANT_OPERATION;
+        $request['DETAIL_LEVEL'] = "PAYMENT";
+        $request['SIGNATURE'] = hash_hmac('sha256', 
+            $this->MERCHANT . 
+            $this->ACCOUNT . 
+            $this->MERCHANT_OPERATION, 
+            hexToStr($this->GATEWAY->API_KEY));
+        return json_encode(array_filter($request));
     }
     
 }
