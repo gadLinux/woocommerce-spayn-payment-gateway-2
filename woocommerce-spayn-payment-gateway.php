@@ -3,12 +3,12 @@
  * Plugin Name:       WooCommerce SPayN Payment Gateway v 2.0
  * Plugin URI:        https://spayn.es
  * Description:       SPayN plugin for WooCommerce.
- * Version:           1.0.0
+ * Version:           2.0.0
  * WC requires at least: 3.0
  * WC tested up to: 4.6.1
  * Author:            Seglan (Iñaki Garaizabal igaraizabal@seglan.com), Gonzalo Aguilar (gaguilar.delgado@gmail.com)
  * Author URI:        https://seglan.com
- * Text Domain:       woocommerce-spayn-payment-gateway
+ * Text Domain:       woocommerce-spayn-payment-gateway-2
  * Domain Path: 	  /languages
  * License:           GPL-2.0+
  * License URI:       http://www.gnu.org/licenses/gpl-2.0.txt

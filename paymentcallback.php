@@ -1,10 +1,10 @@
 <?php
 error_log('Payment callback called!');
 // Disable security.insecure_field_warning.contextual.enabled for http testing
-// foreach ($_POST as $key => $value) {
-//     echo ($key . ": " . $value . "<BR>");
-//     error_log ($key . ": " . $value);
-// }
+foreach ($_POST as $key => $value) {
+    echo ($key . ": " . $value . "<BR>");
+    error_log ($key . ": " . $value);
+}
 
 if (isset($_POST['STATUS'])) {
     $status = $_POST['STATUS'];

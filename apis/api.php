@@ -67,7 +67,8 @@ class spainApiClient {
         $endpoint = '/brw/token/request';
         $url = $this->get_endpoint($endpoint);
 
-        error_log('Sending a iframe content request [' . $url . ']['.$this->MERCHANT_OPERATION.'] in mode ' . $this->GATEWAY->getEnvironment());
+        error_log('Sending a iframe content request [' . $url . ']['.$this->MERCHANT_OPERATION.'] in mode ' . $this->GATEWAY->getEnvironment().
+                '\n'.$message);
         $response = $this->post($url, $message, !$this->is_test_environment());
         if($response!=NULL) {
             $json = json_decode($response, TRUE);
@@ -193,7 +194,7 @@ class spainApiClient {
             $this->MERCHANT_OPERATION . 
             $this->REDIRECT_URL, 
             hexToStr($this->GATEWAY->API_KEY));
-        return json_encode(array_filter($request));
+        return json_encode(array_filter($request),  JSON_UNESCAPED_SLASHES);
     }
 
     private function getPaymentStatusRequest($operation){
